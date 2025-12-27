@@ -7,7 +7,12 @@ import { YouTube } from "youtube-sr";
 import { WebSocketServer } from "ws";
 import http from "http";
 import { existsSync } from "fs";
+import fs from 'fs';
 import path from "path";
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = http.createServer(app);
@@ -15,6 +20,32 @@ const wss = new WebSocketServer({ server });
 
 // Determine yt-dlp command based on environment
 const YT_DLP_CMD = existsSync('./yt-dlp') ? './yt-dlp' : 'yt-dlp';
+
+// Setup cookies on startup
+function setupCookies() {
+    const cookiesPath = process.env.NODE_ENV === 'production' ? '/tmp/cookies.txt' : path.join(__dirname, 'cookies.txt');
+    
+    // If you have cookies in env variable (for production)
+    if (process.env.YOUTUBE_COOKIES) {
+        fs.writeFileSync(cookiesPath, process.env.YOUTUBE_COOKIES);
+        console.log('✅ Cookies loaded from environment variable');
+    } 
+    // Or if cookies.txt is in your project (for development)
+    else if (fs.existsSync(path.join(__dirname, 'cookies.txt'))) {
+        if (process.env.NODE_ENV === 'production') {
+            fs.copyFileSync(path.join(__dirname, 'cookies.txt'), cookiesPath);
+            console.log('✅ Cookies copied to production location');
+        } else {
+            console.log('✅ Cookies found in project directory');
+        }
+    } else {
+        console.warn('⚠️ No cookies found! Downloads may fail due to YouTube bot detection.');
+    }
+    
+    return cookiesPath;
+}
+
+const cookiesPath = setupCookies();
 
 app.use(cors());
 app.use(express.json());
@@ -119,42 +150,43 @@ app.get("/search", async (req, res) => {
 // Store metadata cache to avoid re-extraction
 const metadataCache = new Map();
 
-// Retry mechanism for failed downloads
+// Retry mechanism for failed downloads with cookies
 async function tryDownloadWithFallbacks(id, res, attempt = 1) {
     const maxAttempts = 3;
     
     console.log(`Attempt ${attempt}/${maxAttempts} for video ${id}`);
     
-    const userAgent = getRandomUserAgent();
-    const extractorArgs = getExtractorArgs();
-    
-    // Different strategies for each attempt
+    // Different strategies for each attempt with cookies
     let args;
     if (attempt === 1) {
-        // First attempt: Android client
+        // First attempt: Android client with cookies
         args = [
+            "--cookies", cookiesPath,
             "-f", "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
             "--no-warnings", "--progress", "--newline",
-            "--user-agent", userAgent,
             "--extractor-args", "youtube:player_client=android,web",
+            "--user-agent", "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
             "--geo-bypass", "--socket-timeout", "30",
             "--no-playlist", `https://www.youtube.com/watch?v=${id}`, "-o", "-"
         ];
     } else if (attempt === 2) {
-        // Second attempt: iOS client
+        // Second attempt: iOS client with cookies
         args = [
+            "--cookies", cookiesPath,
             "-f", "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
             "--no-warnings", "--progress", "--newline",
-            "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1",
             "--extractor-args", "youtube:player_client=ios,web",
+            "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1",
             "--geo-bypass", "--socket-timeout", "30",
             "--no-playlist", `https://www.youtube.com/watch?v=${id}`, "-o", "-"
         ];
     } else {
-        // Third attempt: Basic web client with minimal options
+        // Third attempt: Web client with cookies (fallback)
         args = [
+            "--cookies", cookiesPath,
             "-f", "bestaudio", "--no-warnings", "--progress", "--newline",
-            "--user-agent", userAgent,
+            "--extractor-args", "youtube:player_client=web",
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "--no-playlist", `https://www.youtube.com/watch?v=${id}`, "-o", "-"
         ];
     }
@@ -389,5 +421,14 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Simple YT Service > http://localhost:${PORT}`);
     console.log(`Using yt-dlp command: ${YT_DLP_CMD}`);
+    console.log(`Using cookies from: ${cookiesPath}`);
+    
+    // Verify cookies exist
+    if (fs.existsSync(cookiesPath)) {
+        console.log(`✅ Cookies file found (${fs.statSync(cookiesPath).size} bytes)`);
+    } else {
+        console.log('❌ Cookies file not found - downloads may fail');
+    }
+    
     checkYtDlp();
 });
