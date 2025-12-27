@@ -42,6 +42,21 @@ function setupCookies() {
         console.warn('⚠️ No cookies found! Downloads may fail due to YouTube bot detection.');
     }
     
+    // Validate cookies file
+    if (fs.existsSync(cookiesPath)) {
+        const content = fs.readFileSync(cookiesPath, 'utf8');
+        const lines = content.split('\n').filter(line => line.trim() && !line.startsWith('#'));
+        console.log(`📋 Cookies validation: ${lines.length} cookie entries found`);
+        
+        // Check if cookies contain essential YouTube domains
+        const hasYoutubeCookies = content.includes('.youtube.com');
+        console.log(`🎯 YouTube cookies found: ${hasYoutubeCookies}`);
+        
+        if (!hasYoutubeCookies) {
+            console.warn('⚠️ No YouTube cookies detected in file!');
+        }
+    }
+    
     return cookiesPath;
 }
 
@@ -152,46 +167,64 @@ const metadataCache = new Map();
 
 // Retry mechanism for failed downloads with cookies
 async function tryDownloadWithFallbacks(id, res, attempt = 1) {
-    const maxAttempts = 3;
+    const maxAttempts = 4; // Increased to 4 attempts
     
     console.log(`Attempt ${attempt}/${maxAttempts} for video ${id}`);
     
     // Different strategies for each attempt with cookies
     let args;
     if (attempt === 1) {
-        // First attempt: Android client with cookies
+        // First attempt: Android client with cookies file
         args = [
             "--cookies", cookiesPath,
             "-f", "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
             "--no-warnings", "--progress", "--newline",
             "--extractor-args", "youtube:player_client=android,web",
+            "--extractor-args", "youtube:po_token=BGlmIEluZmluaXR5IExvb3AwMF9fX18wMVF3PT0=",
+            "--extractor-args", "youtube:visitor_data=CgtlTWRJRDhOZVRHTShvRSiGnOe4BjIKCgJVUxIEGgAgBQ%3D%3D",
             "--user-agent", "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
             "--geo-bypass", "--socket-timeout", "30",
             "--no-playlist", `https://www.youtube.com/watch?v=${id}`, "-o", "-"
         ];
     } else if (attempt === 2) {
-        // Second attempt: iOS client with cookies
+        // Second attempt: iOS client with cookies file
         args = [
             "--cookies", cookiesPath,
             "-f", "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
             "--no-warnings", "--progress", "--newline",
             "--extractor-args", "youtube:player_client=ios,web",
+            "--extractor-args", "youtube:po_token=BGlmIEluZmluaXR5IExvb3AwMF9fX18wMVF3PT0=",
+            "--extractor-args", "youtube:visitor_data=CgtlTWRJRDhOZVRHTShvRSiGnOe4BjIKCgJVUxIEGgAgBQ%3D%3D",
             "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1",
             "--geo-bypass", "--socket-timeout", "30",
             "--no-playlist", `https://www.youtube.com/watch?v=${id}`, "-o", "-"
         ];
-    } else {
-        // Third attempt: Web client with cookies (fallback)
+    } else if (attempt === 3) {
+        // Third attempt: Try without cookies but with mweb client (newer method)
         args = [
-            "--cookies", cookiesPath,
+            "-f", "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
+            "--no-warnings", "--progress", "--newline",
+            "--extractor-args", "youtube:player_client=mweb,web",
+            "--extractor-args", "youtube:po_token=BGlmIEluZmluaXR5IExvb3AwMF9fX18wMVF3PT0=",
+            "--extractor-args", "youtube:visitor_data=CgtlTWRJRDhOZVRHTShvRSiGnOe4BjIKCgJVUxIEGgAgBQ%3D%3D",
+            "--user-agent", "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+            "--geo-bypass", "--socket-timeout", "30",
+            "--no-playlist", `https://www.youtube.com/watch?v=${id}`, "-o", "-"
+        ];
+    } else {
+        // Fourth attempt: Basic web client with minimal options
+        args = [
             "-f", "bestaudio", "--no-warnings", "--progress", "--newline",
-            "--extractor-args", "youtube:player_client=web",
             "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "--no-playlist", `https://www.youtube.com/watch?v=${id}`, "-o", "-"
         ];
     }
     
     return new Promise((resolve, reject) => {
+        console.log(`Using cookies file: ${cookiesPath} (exists: ${fs.existsSync(cookiesPath)})`);
+        console.log(`yt-dlp command: ${YT_DLP_CMD}`);
+        console.log(`Args:`, args);
+        
         const ytdlp = spawn(YT_DLP_CMD, args);
         let hasData = false;
         let errorOutput = "";
@@ -398,6 +431,34 @@ function checkYtDlp() {
     testProcess.on('close', (code) => {
         if (code === 0) {
             console.log('✅ yt-dlp is available and working');
+            
+            // Test cookies file with yt-dlp
+            if (fs.existsSync(cookiesPath)) {
+                console.log('🧪 Testing cookies with yt-dlp...');
+                const cookieTestProcess = spawn(YT_DLP_CMD, [
+                    '--cookies', cookiesPath,
+                    '--dump-json',
+                    '--no-warnings',
+                    'https://www.youtube.com/watch?v=dQw4w9WgXcQ' // Rick Roll for testing
+                ]);
+                
+                let testOutput = '';
+                cookieTestProcess.stdout.on('data', (data) => {
+                    testOutput += data.toString();
+                });
+                
+                cookieTestProcess.stderr.on('data', (data) => {
+                    console.log('Cookie test stderr:', data.toString().trim());
+                });
+                
+                cookieTestProcess.on('close', (code) => {
+                    if (code === 0 && testOutput.includes('"id"')) {
+                        console.log('✅ Cookies are working with yt-dlp!');
+                    } else {
+                        console.log('❌ Cookies test failed - may need troubleshooting');
+                    }
+                });
+            }
         } else {
             console.log('❌ yt-dlp test failed with code:', code);
         }
