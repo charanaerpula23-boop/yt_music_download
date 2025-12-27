@@ -30,12 +30,25 @@ const RATE_LIMIT_MAX = 3; // 3 downloads per minute per IP
 
 function getRandomUserAgent() {
     const userAgents = [
+        // Desktop browsers
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        // Mobile/Android browsers (often bypass bot detection better)
+        "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     ];
     return userAgents[Math.floor(Math.random() * userAgents.length)];
+}
+
+function getExtractorArgs() {
+    // Try different player clients - Android and iOS often work better
+    const extractorOptions = [
+        "youtube:player_client=android,web",
+        "youtube:player_client=ios,web", 
+        "youtube:player_client=web,android",
+        "youtube:skip=hls,dash;player_client=android"
+    ];
+    return extractorOptions[Math.floor(Math.random() * extractorOptions.length)];
 }
 
 function checkRateLimit(ip) {
@@ -106,8 +119,222 @@ app.get("/search", async (req, res) => {
 // Store metadata cache to avoid re-extraction
 const metadataCache = new Map();
 
+// Retry mechanism for failed downloads
+async function tryDownloadWithFallbacks(id, res, attempt = 1) {
+    const maxAttempts = 3;
+    
+    console.log(`Attempt ${attempt}/${maxAttempts} for video ${id}`);
+    
+    const userAgent = getRandomUserAgent();
+    const extractorArgs = getExtractorArgs();
+    
+    // Different strategies for each attempt
+    let args;
+    if (attempt === 1) {
+        // First attempt: Android client
+        args = [
+            "-f", "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
+            "--no-warnings", "--progress", "--newline",
+            "--user-agent", userAgent,
+            "--extractor-args", "youtube:player_client=android,web",
+            "--geo-bypass", "--socket-timeout", "30",
+            "--no-playlist", `https://www.youtube.com/watch?v=${id}`, "-o", "-"
+        ];
+    } else if (attempt === 2) {
+        // Second attempt: iOS client
+        args = [
+            "-f", "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
+            "--no-warnings", "--progress", "--newline",
+            "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1",
+            "--extractor-args", "youtube:player_client=ios,web",
+            "--geo-bypass", "--socket-timeout", "30",
+            "--no-playlist", `https://www.youtube.com/watch?v=${id}`, "-o", "-"
+        ];
+    } else {
+        // Third attempt: Basic web client with minimal options
+        args = [
+            "-f", "bestaudio", "--no-warnings", "--progress", "--newline",
+            "--user-agent", userAgent,
+            "--no-playlist", `https://www.youtube.com/watch?v=${id}`, "-o", "-"
+        ];
+    }
+    
+    return new Promise((resolve, reject) => {
+        const ytdlp = spawn(YT_DLP_CMD, args);
+        let hasData = false;
+        let errorOutput = "";
+        
+        // Store this download
+        activeDownloads.set(id, { process: ytdlp, progress: 0, attempt });
+
+        res.setHeader("Content-Type", "audio/webm");
+        res.setHeader("Content-Disposition", `attachment; filename="${id}.webm"`);
+        
+        ytdlp.stdout.on('data', (data) => {
+            hasData = true;
+            if (!res.headersSent) {
+                res.write(data);
+            }
+        });
+        
+        ytdlp.stderr.on("data", d => {
+            const output = d.toString();
+            errorOutput += output;
+            
+            // Track progress phases (existing code)
+            let phase = 'preparing';
+            let color = '#ff6b6b';
+            let stepNumber = 0;
+            let totalSteps = 5;
+            let message = '0/5 Preparing...';
+            
+            if (output.includes('Extracting URL')) {
+                phase = 'extracting'; color = '#ff6b6b'; stepNumber = 1;
+                message = `${stepNumber}/${totalSteps} Extracting...`;
+            } else if (output.includes('Downloading webpage')) {
+                phase = 'webpage'; color = '#ffa500'; stepNumber = 2;
+                message = `${stepNumber}/${totalSteps} Getting webpage...`;
+            } else if (output.includes('Downloading android') || output.includes('player API')) {
+                phase = 'api'; color = '#ffff00'; stepNumber = 3;
+                message = `${stepNumber}/${totalSteps} Getting API...`;
+            } else if (output.includes('Downloading m3u8') || output.includes('information')) {
+                phase = 'info'; color = '#87ceeb'; stepNumber = 4;
+                message = `${stepNumber}/${totalSteps} Getting stream info...`;
+            } else if (output.includes('[download]') && output.includes('%')) {
+                phase = 'downloading'; color = '#00ff00'; stepNumber = 5;
+                const progressMatch = output.match(/\[download\]\s+(\d+\.\d+)%/);
+                if (progressMatch) {
+                    const progress = parseFloat(progressMatch[1]);
+                    message = `${stepNumber}/${totalSteps} Downloading ${progress.toFixed(1)}%`;
+                    
+                    activeDownloads.get(id).progress = progress;
+                    
+                    wss.clients.forEach(client => {
+                        if (client.readyState === 1) {
+                            client.send(JSON.stringify({
+                                type: 'progress',
+                                videoId: id,
+                                phase: phase,
+                                percent: progress
+                            }));
+                        }
+                    });
+                    return;
+                }
+            }
+            
+            // Broadcast phase updates
+            wss.clients.forEach(client => {
+                if (client.readyState === 1) {
+                    client.send(JSON.stringify({
+                        type: 'phase',
+                        id: id,
+                        phase: phase,
+                        color: color,
+                        message: `Attempt ${attempt}: ${message}`
+                    }));
+                }
+            });
+            
+            console.log(`YT-DLP (Attempt ${attempt}):`, output.trim());
+        });
+        
+        ytdlp.on("close", (code) => {
+            activeDownloads.delete(id);
+            
+            if (code === 0 && hasData) {
+                console.log(`Download completed for ${id} on attempt ${attempt}`);
+                
+                wss.clients.forEach(client => {
+                    if (client.readyState === 1) {
+                        client.send(JSON.stringify({
+                            type: 'complete',
+                            id: id,
+                            message: `Download completed! (Attempt ${attempt})`
+                        }));
+                    }
+                });
+                
+                if (!res.headersSent) {
+                    res.end();
+                }
+                resolve();
+            } else {
+                console.error(`YT-DLP attempt ${attempt} failed with code ${code}`);
+                
+                // Check if we should retry
+                if (attempt < maxAttempts && 
+                    (errorOutput.includes("Sign in to confirm") || 
+                     errorOutput.includes("bot") || 
+                     code === 1)) {
+                    
+                    console.log(`Retrying with different strategy (${attempt + 1}/${maxAttempts})`);
+                    
+                    wss.clients.forEach(client => {
+                        if (client.readyState === 1) {
+                            client.send(JSON.stringify({
+                                type: 'phase',
+                                id: id,
+                                phase: 'retrying',
+                                color: '#ffa500',
+                                message: `Attempt ${attempt} failed, trying different method...`
+                            }));
+                        }
+                    });
+                    
+                    // Wait 2 seconds before retry
+                    setTimeout(() => {
+                        tryDownloadWithFallbacks(id, res, attempt + 1)
+                            .then(resolve)
+                            .catch(reject);
+                    }, 2000);
+                } else {
+                    // All attempts failed
+                    wss.clients.forEach(client => {
+                        if (client.readyState === 1) {
+                            client.send(JSON.stringify({
+                                type: 'error',
+                                id: id,
+                                message: `Download failed after ${maxAttempts} attempts. YouTube may be blocking requests.`,
+                                error: 'all_attempts_failed'
+                            }));
+                        }
+                    });
+                    
+                    if (!res.headersSent) {
+                        res.status(500).json({ 
+                            error: "Download failed",
+                            message: `All ${maxAttempts} attempts failed. YouTube may be temporarily blocking requests.`,
+                            attempts: maxAttempts
+                        });
+                    }
+                    reject(new Error(`All attempts failed`));
+                }
+            }
+        });
+        
+        ytdlp.on("error", (err) => {
+            console.error(`YT-DLP Error (Attempt ${attempt}):`, err);
+            activeDownloads.delete(id);
+            
+            if (attempt < maxAttempts) {
+                setTimeout(() => {
+                    tryDownloadWithFallbacks(id, res, attempt + 1)
+                        .then(resolve)
+                        .catch(reject);
+                }, 2000);
+            } else {
+                if (!res.headersSent) {
+                    res.status(500).json({ error: "Download failed", message: err.message });
+                }
+                reject(err);
+            }
+        });
+    });
+}
+
 // ------------------- DOWNLOAD WEBM -------------------
-app.get("/download", (req, res) => {
+app.get("/download", async (req, res) => {
     const id = req.query.id;
     if (!id) return res.send("video id required");
 
@@ -120,217 +347,12 @@ app.get("/download", (req, res) => {
         });
     }
 
-    // Start metadata extraction in parallel (don't wait)
-    if (!metadataCache.has(id)) {
-        const metadataArgs = [
-            "--print", "%(title)s|||%(duration)s|||%(uploader)s", 
-            "--no-warnings", 
-            "--no-playlist",
-            "--add-header", `User-Agent:${getRandomUserAgent()}`,
-            "--geo-bypass",
-            "--socket-timeout", "30",
-            `https://www.youtube.com/watch?v=${id}`
-        ];
-        const metadataProcess = spawn(YT_DLP_CMD, metadataArgs);
-        let metadata = "";
-        
-        metadataProcess.stdout.on("data", d => metadata += d.toString());
-        metadataProcess.on("close", (code) => {
-            if (code === 0 && metadata.trim()) {
-                const [title, duration, uploader] = metadata.trim().split("|||");
-                metadataCache.set(id, { title, duration: parseInt(duration) || 0, uploader });
-                setTimeout(() => metadataCache.delete(id), 3600000);
-            }
-        });
+    // Use the new retry mechanism
+    try {
+        await tryDownloadWithFallbacks(id, res);
+    } catch (error) {
+        console.error("All download attempts failed:", error);
     }
-
-    // Start download immediately (parallel to metadata)
-    const args = [
-        "-f", "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
-        "--no-warnings",
-        "--progress",
-        "--newline",
-        "--no-check-certificate",
-        "--prefer-free-formats",
-        "--add-header", `User-Agent:${getRandomUserAgent()}`,
-        "--add-header", "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "--add-header", "Accept-Language:en-US,en;q=0.5",
-        "--add-header", "Accept-Encoding:gzip, deflate",
-        "--add-header", "Connection:keep-alive",
-        "--add-header", "Upgrade-Insecure-Requests:1",
-        "--extractor-args", "youtube:skip=hls,dash",
-        "--concurrent-fragments", "1",
-        "--limit-rate", "5M",
-        "--no-playlist",
-        "--geo-bypass",
-        "--socket-timeout", "30",
-        `https://www.youtube.com/watch?v=${id}`,
-        "-o", "-"
-    ];
-
-    const ytdlp = spawn(YT_DLP_CMD, args);
-    
-    // Store this download
-    activeDownloads.set(id, { process: ytdlp, progress: 0 });
-
-    res.setHeader("Content-Type", "audio/webm");
-    res.setHeader("Content-Disposition", `attachment; filename="${id}.webm"`);
-    
-    ytdlp.stdout.pipe(res);
-
-    ytdlp.stderr.on("data", d => {
-        const output = d.toString();
-        
-        // Track different phases with colors and step numbers
-        let phase = 'preparing';
-        let color = '#ff6b6b'; // red
-        let stepNumber = 0;
-        let totalSteps = 5;
-        let message = '0/5 Preparing...';
-        
-        if (output.includes('Extracting URL')) {
-            phase = 'extracting';
-            color = '#ff6b6b'; // red
-            stepNumber = 1;
-            message = `${stepNumber}/${totalSteps} Extracting...`;
-        } else if (output.includes('Downloading webpage')) {
-            phase = 'webpage';
-            color = '#ffa500'; // orange
-            stepNumber = 2;
-            message = `${stepNumber}/${totalSteps} Getting webpage...`;
-        } else if (output.includes('Downloading android') || output.includes('player API')) {
-            phase = 'api';
-            color = '#ffff00'; // yellow
-            stepNumber = 3;
-            message = `${stepNumber}/${totalSteps} Getting API...`;
-        } else if (output.includes('Downloading m3u8') || output.includes('information')) {
-            phase = 'info';
-            color = '#87ceeb'; // light blue
-            stepNumber = 4;
-            message = `${stepNumber}/${totalSteps} Getting stream info...`;
-        } else if (output.includes('[download]') && output.includes('%')) {
-            phase = 'downloading';
-            color = '#00ff00'; // green
-            stepNumber = 5;
-            
-            // Parse actual download progress
-            const progressMatch = output.match(/\[download\]\s+(\d+\.\d+)%/);
-            if (progressMatch) {
-                const progress = parseFloat(progressMatch[1]);
-                message = `Downloading: ${progress.toFixed(1)}%`;
-                
-                // Broadcast download progress
-                wss.clients.forEach(client => {
-                    if (client.readyState === 1) {
-                        client.send(JSON.stringify({
-                            type: 'progress',
-                            id: id,
-                            progress: progress,
-                            phase: phase,
-                            color: color,
-                            message: message
-                        }));
-                    }
-                });
-                
-                if (activeDownloads.has(id)) {
-                    activeDownloads.get(id).progress = progress;
-                }
-                return;
-            }
-        }
-        
-        // Broadcast phase updates
-        wss.clients.forEach(client => {
-            if (client.readyState === 1) {
-                client.send(JSON.stringify({
-                    type: 'phase',
-                    id: id,
-                    phase: phase,
-                    color: color,
-                    message: message
-                }));
-            }
-        });
-        
-        console.log("YT-DLP:", output.trim());
-        
-        // Check for bot detection error
-        if (output.includes("Sign in to confirm you're not a bot") || output.includes("cookies")) {
-            wss.clients.forEach(client => {
-                if (client.readyState === 1) {
-                    client.send(JSON.stringify({
-                        type: 'error',
-                        id: id,
-                        message: 'YouTube blocked request - try again later',
-                        error: 'bot_detection'
-                    }));
-                }
-            });
-        }
-    });
-
-    ytdlp.on("error", (err) => {
-        console.error("YT-DLP Error:", err);
-        activeDownloads.delete(id);
-        
-        wss.clients.forEach(client => {
-            if (client.readyState === 1) {
-                client.send(JSON.stringify({
-                    type: 'error',
-                    id: id,
-                    message: 'Download failed'
-                }));
-            }
-        });
-        
-        if (!res.headersSent) {
-            res.status(500).send("Download failed");
-        }
-    });
-
-    ytdlp.on("close", (code) => {
-        activeDownloads.delete(id);
-        
-        if (code === 0) {
-            wss.clients.forEach(client => {
-                if (client.readyState === 1) {
-                    client.send(JSON.stringify({
-                        type: 'complete',
-                        id: id,
-                        message: 'Download complete!'
-                    }));
-                }
-            });
-        } else {
-            console.error(`YT-DLP exited with code ${code}`);
-            
-            // Send error message to clients
-            wss.clients.forEach(client => {
-                if (client.readyState === 1) {
-                    client.send(JSON.stringify({
-                        type: 'error',
-                        id: id,
-                        message: code === 1 ? 
-                            'YouTube blocked the request. Please try again in a few minutes.' : 
-                            'Download failed. Please try a different video.',
-                        error: 'download_failed',
-                        code: code
-                    }));
-                }
-            });
-            
-            if (!res.headersSent) {
-                res.status(500).json({ 
-                    error: "Download failed",
-                    message: code === 1 ? 
-                        "YouTube is temporarily blocking requests. Please try again later." : 
-                        "Download failed. Please try a different video.",
-                    code: code
-                });
-            }
-        }
-    });
 });
 
 
