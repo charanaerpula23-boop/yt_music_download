@@ -6,10 +6,15 @@ import { spawn } from "child_process";
 import { YouTube } from "youtube-sr";
 import { WebSocketServer } from "ws";
 import http from "http";
+import { existsSync } from "fs";
+import path from "path";
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
+
+// Determine yt-dlp command based on environment
+const YT_DLP_CMD = existsSync('./yt-dlp') ? './yt-dlp' : 'yt-dlp';
 
 app.use(cors());
 app.use(express.json());
@@ -78,7 +83,7 @@ app.get("/download", (req, res) => {
     // Start metadata extraction in parallel (don't wait)
     if (!metadataCache.has(id)) {
         const metadataArgs = ["--print", "%(title)s|||%(duration)s|||%(uploader)s", "--no-warnings", "--no-playlist", `https://www.youtube.com/watch?v=${id}`];
-        const metadataProcess = spawn("yt-dlp", metadataArgs);
+        const metadataProcess = spawn(YT_DLP_CMD, metadataArgs);
         let metadata = "";
         
         metadataProcess.stdout.on("data", d => metadata += d.toString());
@@ -104,7 +109,7 @@ app.get("/download", (req, res) => {
         "-o", "-"
     ];
 
-    const ytdlp = spawn("yt-dlp", args);
+    const ytdlp = spawn(YT_DLP_CMD, args);
     
     // Store this download
     activeDownloads.set(id, { process: ytdlp, progress: 0 });
@@ -235,7 +240,37 @@ app.get("/download", (req, res) => {
 
 
 // ------------------- START -------------------
+
+// Check yt-dlp availability on startup
+function checkYtDlp() {
+    console.log(`Checking yt-dlp availability: ${YT_DLP_CMD}`);
+    const testProcess = spawn(YT_DLP_CMD, ['--version']);
+    
+    testProcess.on('close', (code) => {
+        if (code === 0) {
+            console.log('✅ yt-dlp is available and working');
+        } else {
+            console.log('❌ yt-dlp test failed with code:', code);
+        }
+    });
+    
+    testProcess.on('error', (err) => {
+        console.log('❌ yt-dlp not found or not executable:', err.message);
+        console.log('📍 Available files in current directory:');
+        try {
+            import('fs').then(fs => {
+                const files = fs.readdirSync('.');
+                console.log(files.filter(f => f.includes('yt-dlp')));
+            });
+        } catch(e) {
+            console.log('Could not list files');
+        }
+    });
+}
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () =>
-    console.log(`Simple YT Service > http://localhost:${PORT}`)
-);
+server.listen(PORT, () => {
+    console.log(`Simple YT Service > http://localhost:${PORT}`);
+    console.log(`Using yt-dlp command: ${YT_DLP_CMD}`);
+    checkYtDlp();
+});
