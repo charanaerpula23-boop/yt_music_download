@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: youtube-music-downloader
+    env: node
+    buildCommand: |
+      npm install &&
+      # Try to install yt-dlp via pip if available
+      (pip3 install yt-dlp || pip install yt-dlp || echo "yt-dlp installation via pip failed, trying alternative method") &&
+      # Download yt-dlp binary as fallback
+      (curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o yt-dlp && chmod +x yt-dlp) || echo "Binary download failed"
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /

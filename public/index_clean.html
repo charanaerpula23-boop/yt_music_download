@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Music Downloader</title>
+    <style>
+body {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    background-color: #000;
+    color: #00ff00;
+    margin: 0;
+    padding: 20px;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+.title {
+    text-align: center;
+    font-size: 28px;
+    margin-bottom: 30px;
+    color: #fff;
+    text-shadow: 0 0 10px #00ff00;
+    letter-spacing: 2px;
+}
+
+.search-section {
+    margin-bottom: 30px;
+    text-align: center;
+}
+
+.search-container {
+    position: relative;
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+input {
+    width: 100%;
+    background: #111;
+    border: 2px solid #333;
+    color: #00ff00;
+    padding: 15px 20px;
+    font-size: 16px;
+    border-radius: 8px;
+    outline: none;
+    transition: border-color 0.3s;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+
+input:focus {
+    border-color: #00ff00;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+}
+
+button {
+    background: #222;
+    color: #00ff00;
+    border: 2px solid #333;
+    padding: 15px 30px;
+    font-size: 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-family: inherit;
+    letter-spacing: 1px;
+    margin-top: 15px;
+}
+
+button:hover {
+    border-color: #00ff00;
+    box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
+    transform: translateY(-2px);
+}
+
+.results {
+    margin-top: 30px;
+}
+
+.result {
+    background: #111;
+    border: 1px solid #333;
+    margin: 15px 0;
+    padding: 20px;
+    border-radius: 8px;
+    transition: all 0.3s;
+    position: relative;
+}
+
+.result:hover {
+    border-color: #555;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.1);
+}
+
+.result-main {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.result img {
+    width: 80px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid #333;
+}
+
+.result-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.result-title {
+    font-weight: bold;
+    color: #fff;
+    font-size: 16px;
+    line-height: 1.3;
+}
+
+.result-duration {
+    color: #888;
+    font-size: 14px;
+}
+
+.result button {
+    background: #333;
+    color: white;
+    border: 1px solid #555;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    width: auto;
+    padding: 6px 12px;
+    margin: 0 4px 0 0;
+    font-size: 12px;
+}
+
+.song-progress {
+    width: 100%;
+    margin-top: 10px;
+    display: none;
+}
+
+.song-progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #222;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+.song-progress-fill {
+    height: 100%;
+    width: 0%;
+    transition: width 0.3s ease, background-color 0.3s ease;
+    background: linear-gradient(90deg, 
+        rgba(255,255,255,0.3) 0%, 
+        rgba(255,255,255,0.1) 50%, 
+        rgba(255,255,255,0.3) 100%);
+    background-size: 200% 100%;
+    animation: slideProgress 2s infinite;
+    position: relative;
+}
+
+@keyframes slideProgress {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+.song-progress-text {
+    font-size: 11px;
+    color: #888;
+    text-align: center;
+}
+
+#status {
+    margin-top: 20px;
+    font-size: 14px;
+    text-align: center;
+    color: #888;
+    min-height: 20px;
+}
+
+@media (max-width: 768px) {
+    .container {
+        padding: 0 10px;
+    }
+    
+    .title {
+        font-size: 24px;
+        margin-bottom: 20px;
+    }
+    
+    .result-main {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .result img {
+        width: 100%;
+        height: 180px;
+        max-width: 320px;
+    }
+    
+    .result-title {
+        font-size: 14px;
+    }
+    
+    input, button {
+        font-size: 14px;
+        padding: 12px 16px;
+    }
+}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="title">🎵 YouTube Music Downloader</div>
+        
+        <div class="search-section">
+            <div class="search-container">
+                <input type="text" id="searchInput" placeholder="Search for music..." onkeypress="if(event.key==='Enter') search()">
+                <button onclick="search()">Search</button>
+            </div>
+        </div>
+
+        <div id="results" class="results"></div>
+        <div id="status"></div>
+    </div>
+
+    <script>
+const API = window.location.origin;
+
+// WebSocket connection for real-time progress updates
+let ws = null;
+let currentDownloadId = null;
+
+function connectWebSocket() {
+    try {
+        ws = new WebSocket(`ws://localhost:3000`);
+        
+        ws.onopen = () => {
+            console.log('WebSocket connected');
+        };
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'progress') {
+                const { videoId, phase, percent } = data;
+                updateProgress(videoId, phase, percent);
+            }
+        };
+        
+        ws.onclose = () => {
+            console.log('WebSocket disconnected, attempting reconnect...');
+            setTimeout(connectWebSocket, 3000);
+        };
+        
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+    } catch (error) {
+        console.error('WebSocket connection failed:', error);
+        setTimeout(connectWebSocket, 3000);
+    }
+}
+
+// Initialize WebSocket
+connectWebSocket();
+
+// Progress update function with color coding
+function updateProgress(videoId, phase, percent) {
+    const progressContainer = document.getElementById(`progress-${videoId}`);
+    const progressFill = document.getElementById(`progress-fill-${videoId}`);
+    const progressText = document.getElementById(`progress-text-${videoId}`);
+    
+    if (!progressContainer || !progressFill || !progressText) return;
+    
+    // Show progress container
+    progressContainer.style.display = 'block';
+    
+    // Set width
+    progressFill.style.width = `${percent}%`;
+    
+    // Set color based on phase
+    let color, text;
+    switch (phase) {
+        case 'extracting':
+            color = '#ff4444'; // Red
+            text = `🔍 Extracting step1... ${percent.toFixed(1)}%`;
+            break;
+        case 'webpage':
+            color = '#ff8844'; // Orange
+            text = `🌐 Extracting step2... ${percent.toFixed(1)}%`;
+            break;
+        case 'api':
+            color = '#ffaa44'; // Yellow
+            text = `📡 Extracting step3... ${percent.toFixed(1)}%`;
+            break;
+        case 'stream_info':
+            color = '#4488ff'; // Blue
+            text = `🎵 Extracting step4... ${percent.toFixed(1)}%`;
+            break;
+        case 'downloading':
+            color = '#44ff44'; // Green
+            text = `⬇️ Downloading... ${percent.toFixed(1)}%`;
+            break;
+        case 'complete':
+            color = '#44ff44'; // Green
+            text = '✅ Download complete!';
+            break;
+        case 'error':
+            color = '#ff4444'; // Red
+            text = '❌ Download failed';
+            break;
+        default:
+            color = '#888888';
+            text = `Processing... ${percent.toFixed(1)}%`;
+    }
+    
+    progressFill.style.backgroundColor = color;
+    progressText.textContent = text;
+    
+    // Hide progress after completion/error
+    if (phase === 'complete' || phase === 'error') {
+        setTimeout(() => {
+            progressContainer.style.display = 'none';
+            currentDownloadId = null;
+        }, 3000);
+    }
+}
+
+function formatDuration(duration) {
+    if (!duration) return 'Unknown';
+    
+    const hours = Math.floor(duration / 3600);
+    const minutes = Math.floor((duration % 3600) / 60);
+    const seconds = duration % 60;
+    
+    if (hours > 0) {
+        return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    } else {
+        return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    }
+}
+
+async function search() {
+    const query = document.getElementById("searchInput").value.trim();
+    if (!query) return;
+
+    document.getElementById("status").textContent = "🔍 Searching...";
+    document.getElementById("results").innerHTML = "";
+
+    try {
+        const response = await fetch(`${API}/search?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+
+        if (!data || data.length === 0) {
+            document.getElementById("status").textContent = "No results found";
+            return;
+        }
+
+        document.getElementById("status").textContent = `Found ${data.length} results`;
+
+        let html = "";
+        data.forEach(v => {
+            html += `
+            <div class="result">
+                <div class="result-main">
+                    <img src="${v.thumbnail}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA4MCA2MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjgwIiBoZWlnaHQ9IjYwIiBmaWxsPSIjMzMzIi8+CjxwYXRoIGQ9Ik0zNSAyNUw1MCAzMEwzNSAzNVYyNVoiIGZpbGw9IiM2NjYiLz4KPHN2Zz4K';">
+                    <div class="result-content">
+                        <div class="result-title">${v.title}</div>
+                        <div class="result-duration">${formatDuration(v.duration)}</div>
+                        <button onclick="downloadSong('${v.id}', \`${v.title.replace(/`/g, '\\`').replace(/\\/g, '\\\\')}\`)">Download</button>
+                    </div>
+                </div>
+                <div class="song-progress" id="progress-${v.id}">
+                    <div class="song-progress-bar">
+                        <div class="song-progress-fill" id="progress-fill-${v.id}"></div>
+                    </div>
+                    <div class="song-progress-text" id="progress-text-${v.id}"></div>
+                </div>
+            </div>`;
+        });
+
+        document.getElementById("results").innerHTML = html;
+    } catch (error) {
+        console.error("Search error:", error);
+        document.getElementById("status").textContent = "Search failed";
+    }
+}
+
+function downloadSong(videoId, title) {
+    if (currentDownloadId) {
+        alert("Another download is in progress. Please wait.");
+        return;
+    }
+    
+    currentDownloadId = videoId;
+    
+    // Create a hidden link to trigger download
+    fetch(`${API}/download?id=${videoId}`)
+        .then(response => {
+            if (!response.ok) throw new Error('Download failed');
+            return response.blob();
+        })
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `${title.replace(/[<>:"/\\|?*]/g, '_')}.webm`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        })
+        .catch(error => {
+            console.error('Download error:', error);
+            alert('Download failed');
+            currentDownloadId = null;
+        });
+}
+
+// Enter key support
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('searchInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            search();
+        }
+    });
+});
+    </script>
+</body>
+</html>

@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebM Music Search + Download</title>
+
+<style>
+body {
+    background: #000;
+    color: #fff;
+    font-family: Consolas, 'Courier New', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 0;
+    padding: 20px;
+    min-height: 100vh;
+}
+
+h2 {
+    text-align: center;
+    margin-bottom: 30px;
+    font-weight: normal;
+    font-size: 18px;
+}
+
+input, button {
+    width: 420px;
+    padding: 12px;
+    margin: 6px;
+    border-radius: 6px;
+    font-size: 16px;
+    font-family: inherit;
+}
+
+input {
+    background: #111;
+    border: 1px solid #333;
+    color: #fff;
+    outline: none;
+}
+
+input:focus {
+    border-color: #555;
+}
+
+button {
+    background: #fff;
+    color: #000;
+    border: none;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+button:hover {
+    opacity: 0.9;
+}
+
+button:active {
+    transform: scale(0.98);
+}
+
+#results {
+    width: 100%;
+    max-width: 500px;
+    margin-top: 20px;
+}
+
+.result {
+    display: flex;
+    flex-direction: column;
+    margin: 8px 0;
+    padding: 12px;
+    border-bottom: 1px solid #222;
+    transition: background 0.2s;
+}
+
+.result:hover {
+    background: #111;
+}
+
+.result-main {
+    display: flex;
+    align-items: center;
+}
+
+.result img {
+    width: 80px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 6px;
+    margin-right: 15px;
+    flex-shrink: 0;
+}
+
+.result-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.result-title {
+    font-size: 14px;
+    margin-bottom: 8px;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.result-duration {
+    color: #888;
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+
+.result button {
+    width: auto;
+    padding: 6px 12px;
+    margin: 0 4px 0 0;
+    font-size: 12px;
+}
+
+.preview-btn {
+    background: #333 !important;
+    color: #fff !important;
+    border: 1px solid #555 !important;
+}
+
+.preview-btn:hover {
+    background: #444 !important;
+}
+
+.preview-btn.playing {
+    background: #555 !important;
+    color: #00ff00 !important;
+}
+
+.audio-player {
+    display: none;
+    width: 100%;
+    margin-top: 8px;
+}
+
+.audio-player audio {
+    width: 100%;
+    height: 30px;
+    background: #222;
+    border-radius: 4px;
+}
+
+.song-progress {
+    width: 100%;
+    margin-top: 10px;
+    display: none;
+}
+
+.song-progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #222;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+.song-progress-fill {
+    height: 100%;
+    width: 0%;
+    transition: width 0.3s ease, background-color 0.3s ease;
+    background: linear-gradient(90deg, 
+        rgba(255,255,255,0.3) 0%, 
+        rgba(255,255,255,0.1) 50%, 
+        rgba(255,255,255,0.3) 100%);
+    background-size: 200% 100%;
+    animation: slideProgress 2s infinite;
+    position: relative;
+}
+
+@keyframes slideProgress {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+.song-progress-text {
+    font-size: 11px;
+    color: #888;
+    text-align: center;
+}
+
+#status {
+    margin-top: 20px;
+    font-size: 14px;
+    text-align: center;
+    color: #888;
+}
+
+#progress-container {
+    width: 420px;
+    margin-top: 20px;
+    display: none;
+}
+
+#progress-bar {
+    width: 100%;
+    height: 12px;
+    background: #222;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+#progress-fill {
+    height: 100%;
+    background: #fff;
+    width: 0%;
+    transition: width 0.3s;
+}
+
+#progress-text {
+    text-align: center;
+    font-size: 12px;
+    color: #888;
+}
+
+.loading {
+    text-align: center;
+    padding: 40px;
+    color: #888;
+    font-size: 14px;
+}
+
+.no-results {
+    text-align: center;
+    padding: 40px;
+    color: #666;
+    font-size: 14px;
+}
+
+/* Mobile Responsive */
+@media (max-width: 480px) {
+    body {
+        padding: 15px;
+    }
+    
+    input, button {
+        width: 100%;
+        max-width: 350px;
+    }
+    
+    h2 {
+        font-size: 16px;
+        margin-bottom: 20px;
+    }
+    
+    .result {
+        flex-direction: column;
+        text-align: center;
+        padding: 15px;
+    }
+    
+    .result img {
+        margin-right: 0;
+        margin-bottom: 10px;
+        width: 120px;
+        height: 90px;
+    }
+    
+    .result-content {
+        width: 100%;
+    }
+    
+    .result button {
+        width: 100px;
+        margin-top: 8px;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<h2>Search → Select → Download WebM</h2>
+
+<input id="query" placeholder="Search music...">
+<button onclick="doSearch()">Search</button>
+
+<div id="results"></div>
+
+<div id="progress-container">
+    <div id="progress-bar">
+        <div id="progress-fill"></div>
+    </div>
+    <div id="progress-text"></div>
+</div>
+
+<div id="status"></div>
+
+<script>
+const API = window.location.origin;
+let ws;
+
+// Initialize WebSocket connection
+function initWebSocket() {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.host}`;
+    ws = new WebSocket(wsUrl);
+    
+    ws.onopen = function() {
+        console.log('WebSocket connected');
+    };
+    
+    ws.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'progress') {
+            updateSongProgress(data.id, data.progress, data.message, data.color);
+        } else if (data.type === 'phase') {
+            updateSongPhase(data.id, data.message, data.color);
+        } else if (data.type === 'complete') {
+            completeSongDownload(data.id);
+        } else if (data.type === 'error') {
+            errorSongDownload(data.id, data.message);
+        }
+    };
+    
+    ws.onclose = function() {
+        console.log('WebSocket disconnected');
+        // Reconnect after 3 seconds
+        setTimeout(initWebSocket, 3000);
+    };
+}
+
+// Initialize WebSocket when page loads
+initWebSocket();
+
+let currentDownloadId = null;
+
+// Preview audio cache
+const audioCache = new Map();
+
+async function togglePreview(id, button) {
+    const audioPlayer = document.getElementById(`player-${id}`);
+    const audio = document.getElementById(`audio-${id}`);
+    
+    if (!audioPlayer || !audio) return;
+    
+    // If already playing, pause and hide
+    if (button.classList.contains('playing')) {
+        audio.pause();
+        audio.currentTime = 0;
+        audioPlayer.style.display = 'none';
+        button.textContent = '▶ Preview';
+        button.classList.remove('playing');
+        return;
+    }
+    
+    // Check if audio is cached
+    if (audioCache.has(id)) {
+        const cachedUrl = audioCache.get(id);
+        audio.src = cachedUrl;
+        audioPlayer.style.display = 'block';
+        button.textContent = '⏸ Playing';
+        button.classList.add('playing');
+        
+        audio.onended = () => {
+            button.textContent = '▶ Preview';
+            button.classList.remove('playing');
+            audioPlayer.style.display = 'none';
+        };
+        
+        audio.play().catch(e => console.log('Play failed:', e));
+        return;
+    }
+    
+    // Start parallel metadata extraction (don't wait for it)
+    fetch(`${API}/metadata?id=${id}`).catch(e => console.log('Metadata failed:', e));
+    
+    // Download preview audio (now faster with direct URL)
+    button.textContent = '⏳ Loading...';
+    button.disabled = true;
+    
+    try {
+        const response = await fetch(`${API}/preview?id=${id}`);
+        
+        if (!response.ok) {
+            throw new Error('Preview failed');
+        }
+        
+        const blob = await response.blob();
+        const audioUrl = URL.createObjectURL(blob);
+        
+        // Cache the audio
+        audioCache.set(id, audioUrl);
+        
+        // Setup audio player
+        audio.src = audioUrl;
+        audioPlayer.style.display = 'block';
+        button.textContent = '⏸ Playing';
+        button.classList.add('playing');
+        button.disabled = false;
+        
+        audio.onended = () => {
+            button.textContent = '▶ Preview';
+            button.classList.remove('playing');
+            audioPlayer.style.display = 'none';
+        };
+        
+        audio.onerror = () => {
+            button.textContent = '❌ Error';
+            button.classList.remove('playing');
+            button.disabled = false;
+            audioPlayer.style.display = 'none';
+            
+            setTimeout(() => {
+                button.textContent = '▶ Preview';
+            }, 2000);
+        };
+        
+        audio.play().catch(e => {
+            console.log('Play failed:', e);
+            button.textContent = '▶ Preview';
+            button.classList.remove('playing');
+            button.disabled = false;
+            audioPlayer.style.display = 'none';
+        });
+        
+    } catch (error) {
+        console.error('Preview failed:', error);
+        button.textContent = '❌ Error';
+        button.disabled = false;
+        
+        setTimeout(() => {
+            button.textContent = '▶ Preview';
+        }, 2000);
+    }
+}
+
+function updateSongProgress(id, progress, message, color) {
+    const progressContainer = document.getElementById(`progress-${id}`);
+    const progressFill = document.getElementById(`progress-fill-${id}`);
+    const progressText = document.getElementById(`progress-text-${id}`);
+    
+    if (progressContainer && progressFill && progressText) {
+        progressContainer.style.display = 'block';
+        progressFill.style.width = progress + '%';
+        progressFill.style.background = `linear-gradient(90deg, 
+            ${color} 0%, 
+            ${color} 100%), 
+            linear-gradient(90deg, 
+                rgba(255,255,255,0.3) 0%, 
+                rgba(255,255,255,0.1) 50%, 
+                rgba(255,255,255,0.3) 100%)`;
+        progressFill.style.backgroundSize = '100% 100%, 200% 100%';
+        progressText.innerHTML = message;
+    }
+}
+
+function updateSongPhase(id, message, color) {
+    const progressContainer = document.getElementById(`progress-${id}`);
+    const progressFill = document.getElementById(`progress-fill-${id}`);
+    const progressText = document.getElementById(`progress-text-${id}`);
+    
+    if (progressContainer && progressFill && progressText) {
+        progressContainer.style.display = 'block';
+        progressFill.style.width = '100%';
+        progressFill.style.background = `linear-gradient(90deg, 
+            ${color} 0%, 
+            ${color} 100%), 
+            linear-gradient(90deg, 
+                rgba(255,255,255,0.3) 0%, 
+                rgba(255,255,255,0.1) 50%, 
+                rgba(255,255,255,0.3) 100%)`;
+        progressFill.style.backgroundSize = '100% 100%, 200% 100%';
+        progressText.innerHTML = message;
+    }
+}
+
+function completeSongDownload(id) {
+    const progressText = document.getElementById(`progress-text-${id}`);
+    const progressFill = document.getElementById(`progress-fill-${id}`);
+    
+    if (progressText && progressFill) {
+        progressFill.style.backgroundColor = '#00ff00';
+        progressText.innerHTML = 'Download complete!';
+        
+        setTimeout(() => {
+            const progressContainer = document.getElementById(`progress-${id}`);
+            if (progressContainer) {
+                progressContainer.style.display = 'none';
+            }
+        }, 3000);
+    }
+}
+
+function errorSongDownload(id, message) {
+    const progressText = document.getElementById(`progress-text-${id}`);
+    const progressFill = document.getElementById(`progress-fill-${id}`);
+    const progressContainer = document.getElementById(`progress-${id}`);
+    
+    if (progressText && progressFill) {
+        progressFill.style.backgroundColor = '#ff0000';
+        progressText.innerHTML = message;
+        
+        setTimeout(() => {
+            if (progressContainer) {
+                progressContainer.style.display = 'none';
+            }
+        }, 3000);
+    }
+}
+
+document.getElementById("query").addEventListener("keyup", e => {
+    if (e.key === "Enter") doSearch();
+});
+
+function formatDuration(seconds) {
+    if (!seconds) return "Unknown";
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+}
+
+async function doSearch() {
+    const q = document.getElementById("query").value.trim();
+    if (!q) return;
+
+    document.getElementById("results").innerHTML = '<div class="loading">Searching...</div>';
+    document.getElementById("status").innerHTML = "";
+
+    try {
+        const res = await fetch(`${API}/search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+
+        if (!data.length) {
+            document.getElementById("results").innerHTML = '<div class="no-results">No results found</div>';
+            return;
+        }
+
+        let html = "";
+        data.forEach(v => {
+            html += `
+            <div class="result">
+                <div class="result-main">
+                    <img src="${v.thumbnail}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA4MCA2MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjgwIiBoZWlnaHQ9IjYwIiBmaWxsPSIjMzMzIi8+CjxwYXRoIGQ9Ik0zNSAyNUw1MCAzMEwzNSAzNVYyNVoiIGZpbGw9IiM2NjYiLz4KPHN2Zz4K';">
+                    <div class="result-content">
+                        <div class="result-title">${v.title}</div>
+                        <div class="result-duration">${formatDuration(v.duration)}</div>
+                        <button onclick="downloadSong('${v.id}', \`${v.title.replace(/`/g, '\\`').replace(/\\/g, '\\\\')}\`)">Download</button>
+                    </div>
+                </div>
+                <div class="song-progress" id="progress-${v.id}">
+                    <div class="song-progress-bar">
+                        <div class="song-progress-fill" id="progress-fill-${v.id}"></div>
+                    </div>
+                    <div class="song-progress-text" id="progress-text-${v.id}"></div>
+                </div>
+            </div>`;
+        });
+
+        document.getElementById("results").innerHTML = html;
+    } catch (error) {
+        document.getElementById("results").innerHTML = '<div class="no-results">Search failed</div>';
+    }
+}
+
+async function downloadSong(id, title) {
+    const progressContainer = document.getElementById(`progress-${id}`);
+    const progressFill = document.getElementById(`progress-fill-${id}`);
+    const progressText = document.getElementById(`progress-text-${id}`);
+    
+    if (!progressContainer || !progressFill || !progressText) {
+        alert('Error: Progress elements not found');
+        return;
+    }
+    
+    // Show progress bar
+    progressContainer.style.display = 'block';
+    progressFill.style.width = '0%';
+    progressFill.style.backgroundColor = '#ff6b6b';
+    progressText.innerHTML = 'Starting download...';
+    
+    // Start download (WebSocket will handle progress updates)
+    try {
+        const response = await fetch(`${API}/download?id=${id}`);
+        
+        if (!response.ok) {
+            throw new Error('Download failed');
+        }
+        
+        // Get the blob for download
+        const blob = await response.blob();
+        
+        // Create download link
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${title.replace(/[^a-z0-9]/gi, '_')}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+    } catch (error) {
+        console.error('Download failed:', error);
+        progressFill.style.backgroundColor = '#ff0000';
+        progressText.innerHTML = 'Download failed. Please try again.';
+        
+        setTimeout(() => {
+            progressContainer.style.display = 'none';
+        }, 3000);
+    }
+}
+
+// Auto-focus search box
+document.getElementById("query").focus();
+</script>
+</body>
+</html>
