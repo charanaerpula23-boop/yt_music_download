@@ -23,6 +23,37 @@ app.use(express.static("public"));
 // Store active downloads
 const activeDownloads = new Map();
 
+// Rate limiting - track requests per IP
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
+const RATE_LIMIT_MAX = 3; // 3 downloads per minute per IP
+
+function getRandomUserAgent() {
+    const userAgents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ];
+    return userAgents[Math.floor(Math.random() * userAgents.length)];
+}
+
+function checkRateLimit(ip) {
+    const now = Date.now();
+    const userRequests = rateLimitMap.get(ip) || [];
+    
+    // Remove old requests
+    const recentRequests = userRequests.filter(time => now - time < RATE_LIMIT_WINDOW);
+    
+    if (recentRequests.length >= RATE_LIMIT_MAX) {
+        return false; // Rate limited
+    }
+    
+    recentRequests.push(now);
+    rateLimitMap.set(ip, recentRequests);
+    return true; // OK to proceed
+}
+
 // WebSocket connection
 wss.on('connection', (ws) => {
     console.log('Client connected');
@@ -80,9 +111,26 @@ app.get("/download", (req, res) => {
     const id = req.query.id;
     if (!id) return res.send("video id required");
 
+    // Rate limiting
+    const clientIP = req.ip || req.connection.remoteAddress;
+    if (!checkRateLimit(clientIP)) {
+        return res.status(429).json({ 
+            error: "Rate limit exceeded. Please wait before downloading again.",
+            retryAfter: 60 
+        });
+    }
+
     // Start metadata extraction in parallel (don't wait)
     if (!metadataCache.has(id)) {
-        const metadataArgs = ["--print", "%(title)s|||%(duration)s|||%(uploader)s", "--no-warnings", "--no-playlist", `https://www.youtube.com/watch?v=${id}`];
+        const metadataArgs = [
+            "--print", "%(title)s|||%(duration)s|||%(uploader)s", 
+            "--no-warnings", 
+            "--no-playlist",
+            "--add-header", `User-Agent:${getRandomUserAgent()}`,
+            "--geo-bypass",
+            "--socket-timeout", "30",
+            `https://www.youtube.com/watch?v=${id}`
+        ];
         const metadataProcess = spawn(YT_DLP_CMD, metadataArgs);
         let metadata = "";
         
@@ -98,13 +146,24 @@ app.get("/download", (req, res) => {
 
     // Start download immediately (parallel to metadata)
     const args = [
-        "-f", "bestaudio",
+        "-f", "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
         "--no-warnings",
         "--progress",
         "--newline",
-        "--concurrent-fragments", "4",
-        "--limit-rate", "10M",
+        "--no-check-certificate",
+        "--prefer-free-formats",
+        "--add-header", `User-Agent:${getRandomUserAgent()}`,
+        "--add-header", "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "--add-header", "Accept-Language:en-US,en;q=0.5",
+        "--add-header", "Accept-Encoding:gzip, deflate",
+        "--add-header", "Connection:keep-alive",
+        "--add-header", "Upgrade-Insecure-Requests:1",
+        "--extractor-args", "youtube:skip=hls,dash",
+        "--concurrent-fragments", "1",
+        "--limit-rate", "5M",
         "--no-playlist",
+        "--geo-bypass",
+        "--socket-timeout", "30",
         `https://www.youtube.com/watch?v=${id}`,
         "-o", "-"
     ];
@@ -195,6 +254,20 @@ app.get("/download", (req, res) => {
         });
         
         console.log("YT-DLP:", output.trim());
+        
+        // Check for bot detection error
+        if (output.includes("Sign in to confirm you're not a bot") || output.includes("cookies")) {
+            wss.clients.forEach(client => {
+                if (client.readyState === 1) {
+                    client.send(JSON.stringify({
+                        type: 'error',
+                        id: id,
+                        message: 'YouTube blocked request - try again later',
+                        error: 'bot_detection'
+                    }));
+                }
+            });
+        }
     });
 
     ytdlp.on("error", (err) => {
@@ -231,8 +304,30 @@ app.get("/download", (req, res) => {
             });
         } else {
             console.error(`YT-DLP exited with code ${code}`);
+            
+            // Send error message to clients
+            wss.clients.forEach(client => {
+                if (client.readyState === 1) {
+                    client.send(JSON.stringify({
+                        type: 'error',
+                        id: id,
+                        message: code === 1 ? 
+                            'YouTube blocked the request. Please try again in a few minutes.' : 
+                            'Download failed. Please try a different video.',
+                        error: 'download_failed',
+                        code: code
+                    }));
+                }
+            });
+            
             if (!res.headersSent) {
-                res.status(500).send("Download failed");
+                res.status(500).json({ 
+                    error: "Download failed",
+                    message: code === 1 ? 
+                        "YouTube is temporarily blocking requests. Please try again later." : 
+                        "Download failed. Please try a different video.",
+                    code: code
+                });
             }
         }
     });
